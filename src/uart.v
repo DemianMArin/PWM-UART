@@ -2,6 +2,7 @@ module uart (
     input clk,         // 27MHz clock
     input rx,          // UART RX from external device
     input target_reached,  // Signal from PWM when target is reached
+    input [7:0] current_state_msg,  // Fixed: should be 8-bit input
     output tx,         // UART TX to external device
     output reg [2:0] state_desired,  // State for PWM
     output reg command_valid         // Valid command signal for PWM
@@ -32,18 +33,25 @@ module uart (
     
     // State machine for transmitting responses
     reg [2:0] tx_state;
-    reg [1:0] tx_pending;      // 0=none, 1=ACK, 2=REACHED
+    // Modified: Use 2 bits to handle 3 types of pending transmissions
+    reg [1:0] tx_pending;      // 0=none, 1=ACK, 2=REACHED, 3=STATE_UPDATE
     
     // State machine for receiving data
     reg [3:0] rx_state;
     
-    // State definitions (must match PWM module)
+    // State definitions
     localparam IDLE = 3'b001,
-               DELIVERY = 3'b010,
-               TOP = 3'b011,
-               INCREMENT = 3'b100,
-               DECREMENT = 3'b101;
+               PRELOAD = 3'b010,
+               DELIVERY = 3'b011,
+               TOP = 3'b100,
+               INCREMENT = 3'b101,
+               DECREMENT = 3'b110;
+
+    // Periodic state update timer
+    localparam timer_100ms = 2700000;  // 100ms at 27MHz
+    reg [21:0] timer_count_reg;        // Reduced size - 22 bits is enough for 2.7M
     
+    // Target reached edge detection
     reg target_reached_prev;
    
     // Initialize registers
@@ -57,6 +65,7 @@ module uart (
         rx_state = 0;
         state_desired = IDLE;
         command_valid = 0;
+        timer_count_reg = 0;
     end
     
     // UART Master instance
@@ -83,42 +92,51 @@ module uart (
         .RTSn()                   // Request To Send (not used)
     );
     
-    
     always @(posedge clk) begin
-      // Detech target reached edge and queue "R" response
         if (!reset_n) begin
+            timer_count_reg <= 0;
+            tx_pending <= 0;
             target_reached_prev <= 0;
         end else begin
-            target_reached_prev <= target_reached;
             
-            // When target is reached, queue "R" response
-            if (target_reached && !target_reached_prev) begin
+            // 100ms timer for periodic state updates
+            if (timer_count_reg >= timer_100ms) begin
+                timer_count_reg <= 0;
+                // Queue periodic state update if no other transmission is pending
                 if (tx_pending == 0) begin
-                    tx_pending <= 2; // REACHED response
+                    tx_pending <= 2'b11;  // STATE_UPDATE
+                end
+                // Note: If another transmission is pending, we skip this cycle
+                // The next 100ms timer will try again
+            end else begin
+                timer_count_reg <= timer_count_reg + 1;
+            end
+
+            // Detect target reached edge and queue "R" response
+            target_reached_prev <= target_reached;
+            if (target_reached && !target_reached_prev) begin
+                // Priority: REACHED response has higher priority than periodic updates
+                if (tx_pending == 0 || tx_pending == 2'b11) begin
+                    tx_pending <= 2'b10; // REACHED response
                 end
             end
-        end
 
-
-      // Transmit state machine
-        if (!reset_n) begin
-            tx_state <= 0;
-            tx_en <= 0;
-        end else begin
+            // Transmit state machine
             case (tx_state)
                 0: begin  // Idle state, check for pending transmissions
-                    tx_en <= 0;
                     if (tx_pending != 0 && !tx_rdy_n) begin
                         tx_state <= 1;
                     end
                 end
                 
-                1: begin  // Send response
-                    if (tx_pending == 1) begin
-                        wdata <= "A";  // Acknowledgment
-                    end else if (tx_pending == 2) begin
-                        wdata <= "R";  // Reached
-                    end
+                1: begin  // Send response based on pending type
+                    case (tx_pending)
+                        2'b01: wdata <= "A";                    // ACK
+                        2'b10: wdata <= "R";                    // REACHED
+                        2'b11: wdata <= current_state_msg;      // STATE_UPDATE
+                        default: wdata <= "?";                  // Should not happen
+                    endcase
+
                     waddr <= 3'b000;  // Data register
                     tx_en <= 1;
                     tx_state <= 2;
@@ -134,17 +152,11 @@ module uart (
                 
                 default: tx_state <= 0;
             endcase
-        end
 
-    // Receive state machine
-        if (!reset_n) begin
-            rx_state <= 0;
-            rx_en <= 0;
-            state_desired <= IDLE;
-            command_valid <= 0;
-        end else begin
+
+
+            // Receive state machine
             command_valid <= 0;  // Reset command valid each cycle
-            
             case (rx_state)
                 0: begin  // Check if data is available
                     raddr <= 3'b000;  // Data register
@@ -161,36 +173,50 @@ module uart (
                         "t": begin  // Top command
                             state_desired <= TOP;
                             command_valid <= 1;
-                            // Queue ACK response
-                            if (tx_pending == 0) tx_pending <= 1;
+                            // Queue ACK response (higher priority than state updates)
+                            if (tx_pending == 0 || tx_pending == 2'b11) begin
+                                tx_pending <= 2'b01;
+                            end
+                        end
+
+                        "p": begin  // Preload command
+                            state_desired <= PRELOAD;
+                            command_valid <= 1;
+                            if (tx_pending == 0 || tx_pending == 2'b11) begin
+                                tx_pending <= 2'b01;
+                            end
                         end
                         
                         "i": begin  // Idle/Bottom command
                             state_desired <= IDLE;
                             command_valid <= 1;
-                            // Queue ACK response
-                            if (tx_pending == 0) tx_pending <= 1;
+                            if (tx_pending == 0 || tx_pending == 2'b11) begin
+                                tx_pending <= 2'b01;
+                            end
                         end
                         
                         "e": begin  // Delivery command
                             state_desired <= DELIVERY;
                             command_valid <= 1;
-                            // Queue ACK response
-                            if (tx_pending == 0) tx_pending <= 1;
+                            if (tx_pending == 0 || tx_pending == 2'b11) begin
+                                tx_pending <= 2'b01;
+                            end
                         end
                         
                         "u": begin  // Increment command
                             state_desired <= INCREMENT;
                             command_valid <= 1;
-                            // Queue ACK response
-                            if (tx_pending == 0) tx_pending <= 1;
+                            if (tx_pending == 0 || tx_pending == 2'b11) begin
+                                tx_pending <= 2'b01;
+                            end
                         end
                         
                         "d": begin  // Decrement command
                             state_desired <= DECREMENT;
                             command_valid <= 1;
-                            // Queue ACK response
-                            if (tx_pending == 0) tx_pending <= 1;
+                            if (tx_pending == 0 || tx_pending == 2'b11) begin
+                                tx_pending <= 2'b01;
+                            end
                         end
                         
                         default: begin
@@ -204,7 +230,6 @@ module uart (
                 default: rx_state <= 0;
             endcase
         end
-
     end
 
 endmodule

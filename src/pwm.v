@@ -5,6 +5,7 @@ module pwm (
   input wire [2:0] state_desired,
   input wire uart_command_valid,
   output reg target_reached,
+  output reg [7:0] current_state_msg,
   output wire moving,
   output reg pwm
   );
@@ -32,6 +33,8 @@ module pwm (
   reg start_movement;             // Command to start movement
   reg movement_active;            // Status from movement block
   reg uart_command_valid_prev;    // To detect edge
+  reg [7:0] current_state_reg;
+  
 
   // Parameters for smooth movement
   localparam auto_increment = 100;              // Step size for smooth movement
@@ -39,17 +42,29 @@ module pwm (
 
   // Position counts
   localparam idle_count = 22_499,
-             delivery_count = 62_499,
+             preload_count = 30_499,
+             delivery_count = 60_499,
              top_count = 67_499,
              increment_count = 1000,
              decrement_count = 1000;
 
   // State definitions
   localparam IDLE = 3'b001,
-             DELIVERY = 3'b010,
-             TOP = 3'b011,
-             INCREMENT = 3'b100,
-             DECREMENT = 3'b101;
+             PRELOAD = 3'b010,
+             DELIVERY = 3'b011,
+             TOP = 3'b100,
+             INCREMENT = 3'b101,
+             DECREMENT = 3'b110;
+
+  /*
+  * State Desired
+  * "t" -> top
+  * "p" -> preload
+  * "i" -> idle/bottom
+  * "e" -> delivery
+  * "u" -> up
+  * "d" -> down
+  */
 
   initial begin // Initializing regs
     prev_count_cycle = { (size_counter+1) {1'b0} };  
@@ -58,6 +73,9 @@ module pwm (
     duty_count_reg = idle_count;
     target_position = idle_count;
     target_reached = 0;
+    current_state_reg = "I";
+    current_state_msg = current_state_reg;
+
   end
 
   assign moving = movement_active;
@@ -74,25 +92,35 @@ module pwm (
           case (state_desired)
               IDLE: begin
                   target_position <= idle_count;
+                  current_state_reg <= "I";
+                  start_movement <= 1;
+              end
+              PRELOAD: begin
+                  target_position <= preload_count;
+                  current_state_reg <= "P";
                   start_movement <= 1;
               end
               DELIVERY: begin
                   target_position <= delivery_count;
+                  current_state_reg <= "E";
                   start_movement <= 1;
               end
               TOP: begin
                   target_position <= top_count;
+                  current_state_reg <= "T";
                   start_movement <= 1;
               end
               INCREMENT: begin
                   if (target_position + increment_count <= top_count) begin
                       target_position <= target_position + increment_count;
+                      current_state_reg <= "U";
                       start_movement <= 1;
                   end
               end
               DECREMENT: begin
                   if (target_position >= idle_count + decrement_count) begin
                       target_position <= target_position - decrement_count;
+                      current_state_reg <= "D";
                       start_movement <= 1;
                   end
               end
@@ -106,6 +134,7 @@ module pwm (
           if (up && !up_prev) begin
             if (target_position + increment_count <= top_count) begin
                 target_position <= target_position + increment_count;
+                current_state_reg <= "U";
                 start_movement <= 1;
             end
           end
@@ -113,6 +142,7 @@ module pwm (
           if (down && !down_prev) begin
             if (target_position >= idle_count + decrement_count) begin
               target_position <= target_position - decrement_count;
+              current_state_reg <= "D";
               start_movement <= 1;
             end
           end
@@ -143,6 +173,7 @@ module pwm (
                       duty_count_reg <= target_position;  // Final step to exact target
                       movement_active <= 0;
                       target_reached <= 1;  // Signal that target was reached
+                      current_state_msg <= current_state_reg;
                   end
               end else if (duty_count_reg > target_position) begin
                   if ((duty_count_reg - target_position) >= auto_increment) begin
@@ -151,10 +182,12 @@ module pwm (
                       duty_count_reg <= target_position;  // Final step to exact target
                       movement_active <= 0;
                       target_reached <= 1;  // Signal that target was reached
+                      current_state_msg <= current_state_reg;
                   end
               end else begin
                   movement_active <= 0;  // Already at target
                   target_reached <= 1;   // Signal that target was reached
+                  current_state_msg <= current_state_reg;
               end
           end else begin
               increment_timer <= increment_timer + 1;
