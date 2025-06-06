@@ -1,0 +1,37 @@
+module top (
+    input wire clk,          // 27MHz clock
+    input wire up,           // Physical up button
+    input wire down,         // Physical down button
+    input wire rx,           // UART RX from external device
+    output wire tx,          // UART TX to external device
+    output wire pwm          // PWM output signal
+);
+
+    // Internal signals between UART and PWM modules
+    wire [2:0] state_desired;
+    wire uart_command_valid;
+    wire target_reached;
+
+    // PWM module instance
+    pwm pwm_inst (
+        .clk(clk),
+        .up(up),
+        .down(down),
+        .state_desired(state_desired),
+        .uart_command_valid(uart_command_valid),
+        .target_reached(target_reached),
+        .moving(),  // Not connected - internal to PWM
+        .pwm(pwm)
+    );
+
+    // UART module instance
+    uart uart_inst (
+        .clk(clk),
+        .rx(rx),
+        .target_reached(target_reached),
+        .tx(tx),
+        .state_desired(state_desired),
+        .command_valid(uart_command_valid)
+    );
+
+endmodule

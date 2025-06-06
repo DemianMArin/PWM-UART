@@ -1,0 +1,8 @@
+impl/*
+*.user
+**/*_tmp.v
+src/uart_master/doc/
+src/uart_master/sim/
+src/uart_master/tb/
+src/uart_master/temp/
+
