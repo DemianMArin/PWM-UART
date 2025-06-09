@@ -15,6 +15,24 @@ In order to change state send the letter corresponding to the state (lowercase).
     DECREMENT -> "d"
 ```
 
+Analog to ROS2
+```
+   0 idle/load -> i
+   1 preload -> p
+   2 load/idle -> l
+   3 raise -> t // top in fpga
+   4 unload -> e
+```
+
+Measurements in real life
+```
+ idle_count = 21_499, // 5cm
+ preload_count = 12_499, // 0.6 cm
+ load_count = 21_499, // 5cm
+ delivery_count = 39_499, // 20cm
+ top_count = 42_999, // 23cm
+```
+
 
 ## Problems with UART
 

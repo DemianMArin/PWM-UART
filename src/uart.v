@@ -41,11 +41,13 @@ module uart (
     
     // State definitions
     localparam IDLE = 3'b001,
-               PRELOAD = 3'b010,
-               DELIVERY = 3'b011,
-               TOP = 3'b100,
-               INCREMENT = 3'b101,
-               DECREMENT = 3'b110;
+             PRELOAD = 3'b010,
+             LOAD = 3'b011,
+             DELIVERY = 3'b100,
+             TOP = 3'b101,
+             INCREMENT = 3'b110,
+             DECREMENT = 3'b111;
+
 
     // Periodic state update timer
     localparam timer_100ms = 2700000;  // 100ms at 27MHz
@@ -164,16 +166,14 @@ module uart (
                     if (!rx_rdy_n) begin  // Data is ready to be read
                         rx_state <= 1;
                     end
-                end
-                
+                end               
                 1: begin  // Read and process data
                     rx_en <= 0;
                     
                     case (rdata)
-                        "t": begin  // Top command
-                            state_desired <= TOP;
+                       "i": begin  // Idle/Bottom command
+                            state_desired <= IDLE;
                             command_valid <= 1;
-                            // Queue ACK response (higher priority than state updates)
                             if (tx_pending == 0 || tx_pending == 2'b11) begin
                                 tx_pending <= 2'b01;
                             end
@@ -186,16 +186,25 @@ module uart (
                                 tx_pending <= 2'b01;
                             end
                         end
-                        
-                        "i": begin  // Idle/Bottom command
-                            state_desired <= IDLE;
+
+                       "l": begin  // Idle/Bottom/Load command
+                            state_desired <= LOAD;
                             command_valid <= 1;
                             if (tx_pending == 0 || tx_pending == 2'b11) begin
                                 tx_pending <= 2'b01;
                             end
                         end
-                        
-                        "e": begin  // Delivery command
+
+                        "t": begin  // Top command
+                            state_desired <= TOP;
+                            command_valid <= 1;
+                            // Queue ACK response (higher priority than state updates)
+                            if (tx_pending == 0 || tx_pending == 2'b11) begin
+                                tx_pending <= 2'b01;
+                            end
+                        end
+                                                
+                        "e": begin  // Delivery/Unload command
                             state_desired <= DELIVERY;
                             command_valid <= 1;
                             if (tx_pending == 0 || tx_pending == 2'b11) begin

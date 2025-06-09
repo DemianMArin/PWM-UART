@@ -41,20 +41,29 @@ module pwm (
   localparam timer_5ms = 135_000;              // 5ms at 27MHz (27,000,000 * 0.005)
 
   // Position counts
-  localparam idle_count = 22_499,
-             preload_count = 30_499,
-             delivery_count = 60_499,
-             top_count = 67_499,
+  localparam idle_count = 21_499, // Arm should be at a level for transport
+             preload_count = 12_499, // Arm should be at lowest level for loading
+             load_count = 21_499, // Same as idle
+             delivery_count = 39_499, // Arm should be little less than top
+             top_count = 42_999, // Arm is at highest to enter trailer
              increment_count = 1000,
              decrement_count = 1000;
+
+   // 0 idle/load -> i
+   // 1 preload -> p
+   // 2 load/idle -> l
+   // 3 raise -> t
+   // 4 unload -> e
+
 
   // State definitions
   localparam IDLE = 3'b001,
              PRELOAD = 3'b010,
-             DELIVERY = 3'b011,
-             TOP = 3'b100,
-             INCREMENT = 3'b101,
-             DECREMENT = 3'b110;
+             LOAD = 3'b011,
+             DELIVERY = 3'b100,
+             TOP = 3'b101,
+             INCREMENT = 3'b110,
+             DECREMENT = 3'b111;
 
   /*
   * State Desired
@@ -100,6 +109,11 @@ module pwm (
                   current_state_reg <= "P";
                   start_movement <= 1;
               end
+              LOAD: begin
+                  target_position <= load_count;
+                  current_state_reg <= "L";
+                  start_movement <= 1;
+              end
               DELIVERY: begin
                   target_position <= delivery_count;
                   current_state_reg <= "E";
@@ -118,12 +132,13 @@ module pwm (
                   end
               end
               DECREMENT: begin
-                  if (target_position >= idle_count + decrement_count) begin
+                  if (target_position >= preload_count + decrement_count) begin
                       target_position <= target_position - decrement_count;
                       current_state_reg <= "D";
                       start_movement <= 1;
                   end
               end
+
               default: begin
                   // Invalid state, do nothing
               end
@@ -140,7 +155,7 @@ module pwm (
           end
 
           if (down && !down_prev) begin
-            if (target_position >= idle_count + decrement_count) begin
+            if (target_position >= preload_count + decrement_count) begin
               target_position <= target_position - decrement_count;
               current_state_reg <= "D";
               start_movement <= 1;
