@@ -37,14 +37,14 @@ module pwm (
   
 
   // Parameters for smooth movement
-  localparam auto_increment = 100;              // Step size for smooth movement
+  localparam auto_increment = 45;              // Step size for smooth movement
   localparam timer_5ms = 135_000;              // 5ms at 27MHz (27,000,000 * 0.005)
 
   // Position counts
   localparam idle_count = 21_499, // Arm should be at a level for transport
              preload_count = 12_499, // Arm should be at lowest level for loading
              load_count = 21_499, // Same as idle
-             delivery_count = 39_499, // Arm should be little less than top
+             delivery_count = 37_999, // Arm should be little less than top
              top_count = 42_999, // Arm is at highest to enter trailer
              increment_count = 1000,
              decrement_count = 1000;
